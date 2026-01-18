@@ -8,7 +8,7 @@ import re
 
 # --- CONFIGURATION ---
 # 1. Update this with the UPI ID you want money sent to
-SOCIETY_UPI_ID = "treasurer@upi"  
+SOCIETY_UPI_ID = "8143373163@kotak811"  
 SOCIETY_NAME_SHORT = "RPE Association"
 SOCIETY_NAME_FULL = "RPE Owners/Residents Association"
 
