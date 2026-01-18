@@ -7,8 +7,7 @@ import os
 import re
 
 # --- CONFIGURATION ---
-# 1. Update this with the UPI ID you want money sent to
-SOCIETY_UPI_ID = "8143373163@kotak811"  
+SOCIETY_UPI_ID = "8143373163@kotak811"
 SOCIETY_NAME_SHORT = "RPE Association"
 SOCIETY_NAME_FULL = "RPE Owners/Residents Association"
 
@@ -69,9 +68,6 @@ def local_css():
 
 # --- GOOGLE SHEETS CONNECTION (CLOUD READY) ---
 def get_google_sheet():
-    # ⚠️ This uses Streamlit Secrets for security on the Cloud
-    # Ensure you add your JSON content to 'Secrets' in the Streamlit Dashboard
-    # under the header [gcp_service_account]
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds_dict = st.secrets["gcp_service_account"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
@@ -92,7 +88,6 @@ def get_target_months(p_type, year, qtr=None, month=None):
 
 # --- HELPER: NATURAL SORTING ---
 def natural_key(text):
-    # Sorts "Plot 2" before "Plot 10"
     return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', str(text))]
 
 # --- PAGE SETUP ---
@@ -115,7 +110,6 @@ try:
     
     if 'Lane No.' in df.columns:
         df = df.dropna(subset=['Lane No.'])
-        # Clean Lane No (Remove decimals like 1.0 -> 1)
         df['Lane No.'] = df['Lane No.'].astype(str).str.replace(r'\.0$', '', regex=True)
     else:
         st.error("⚠️ Column 'Lane No.' not found in data.csv.")
@@ -127,7 +121,6 @@ except FileNotFoundError:
 
 # --- INPUT SECTION ---
 with st.container():
-    # Split Identity into Lane (1), Plot (1), Info (2)
     c_lane, c_plot, c_info = st.columns([1, 1, 2])
     
     with c_lane:
@@ -138,13 +131,11 @@ with st.container():
         filtered_plots = sorted(df[df['Lane No.'] == selected_lane]['Plot No.'].unique(), key=natural_key)
         plot_no = st.selectbox("Plot", filtered_plots)
         
-    # Fetch Data
     resident_data = df[df['Plot No.'] == plot_no].iloc[0]
     resident_name = resident_data['Name']
     
     with c_info:
         msg = f"👤 **{resident_name}**"
-        # Check Past Dues
         if 'Past Dues' in df.columns:
             past_dues = resident_data['Past Dues']
             try:
@@ -204,11 +195,15 @@ b1, b2 = st.columns(2)
 b1.link_button("🔵 Pay via PhonePe", upi_url, use_container_width=True)
 b2.link_button("🟢 Pay via GPay", upi_url, use_container_width=True)
 
+# --- MANUAL PAY FALLBACK (FIX FOR 2000 LIMIT) ---
+if auto_amount > 2000:
+    st.info(f"💡 **Paying over ₹2000?** Link buttons may fail due to UPI limits. Please copy ID below and pay manually:")
+    st.code(SOCIETY_UPI_ID, language="text")
+
 # --- PROOF SUBMISSION FORM ---
 with st.form("verify_form", border=True):
     st.write("**Submit Payment Proof**")
     
-    # User can edit the Amount if they paid differently
     f1, f2 = st.columns(2)
     with f1:
         amount_paid_user = st.number_input("Amount Paid (₹)", value=int(auto_amount), step=1)
@@ -237,7 +232,6 @@ with st.form("verify_form", border=True):
                     sheet = get_google_sheet()
                     rows_to_add = []
                     
-                    # Columns: Date, Plot, Name, Period, Amt, UTR, Proof, Note, Verified
                     for m in target_months:
                         row = [
                             current_time, plot_no, resident_name, f"{m} {selected_year}",
@@ -264,17 +258,13 @@ with st.expander(f"📜 History: {plot_no}", expanded=True):
             my_history = history_df[history_df['Plot No'] == str(plot_no)]
             
             if not my_history.empty:
-                # Rename columns for mobile readability
                 my_history = my_history.rename(columns={
                     "Date": "Date", "Period": "Period", "Amount": "Amt", 
                     "Transaction ID": "UTR", "Verified": "Status", 
                     "verified": "Status", "Payment verified": "Status",
                     "Payment Verified": "Status"
                 })
-                # Handle missing status column gracefully
                 if "Status" not in my_history.columns: my_history["Status"] = "Pending"
-                
-                # Show only essential columns
                 st.dataframe(my_history[["Date", "Period", "Amt", "UTR", "Status"]], use_container_width=True, hide_index=True)
             else:
                 st.info("No records found.")
