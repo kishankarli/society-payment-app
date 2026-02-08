@@ -5,14 +5,14 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
 import re
-import urllib.parse  # Added for safe URL encoding
+import urllib.parse
 
 # --- CONFIGURATION ---
 SOCIETY_UPI_ID = "8143373163@kotak811"
 SOCIETY_NAME_SHORT = "RPE Association"
 SOCIETY_NAME_FULL = "RPE Owners/Residents Association"
 
-# 2. This must match your Google Sheet Name exactly
+# Google Sheet Name
 GOOGLE_SHEET_NAME = "Society_Payments_DB"
 MONTHLY_FEE = 300
 
@@ -67,7 +67,7 @@ def local_css():
         unsafe_allow_html=True
     )
 
-# --- GOOGLE SHEETS CONNECTION (CLOUD READY) ---
+# --- GOOGLE SHEETS CONNECTION ---
 def get_google_sheet():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds_dict = st.secrets["gcp_service_account"]
@@ -179,39 +179,39 @@ with st.container():
 # --- WARNING BANNER ---
 st.markdown("""
     <div style='background-color: #ffebee; border-left: 4px solid #d32f2f; padding: 10px; border-radius: 4px; margin-bottom: 10px; font-size: 0.9rem;'>
-        <strong style='color: #b71c1c;'>⚠️ CRITICAL:</strong> 
-        <span style='color: #c62828;'>Payment will NOT be recorded until Proof is submitted below.</span>
+        <strong style='color: #b71c1c;'>⚠️ IMPORTANT:</strong> 
+        <span style='color: #c62828;'>Clicking the button below opens your UPI app. You must enter the amount manually.</span>
     </div>
 """, unsafe_allow_html=True)
 
-# --- GENERATE PAYMENT LINKS (FIXED FOR UPI APPS) ---
+# --- GENERATE PAYMENT LINKS (EDITABLE AMOUNT) ---
 if period_type == "Year": note_suffix = f"{selected_year}"
 elif period_type == "Quarter": note_suffix = f"{selected_qtr}_{selected_year}"
 else: note_suffix = f"{selected_month}_{selected_year}"
 
 upi_note = f"{plot_no}_{note_suffix}"
 
-# Constructing Safe UPI URL
+# NOTE: We removed "am" (Amount) to allow user editing
 upi_params = {
-    "pa": SOCIETY_UPI_ID,
-    "pn": SOCIETY_NAME_SHORT,
-    "am": str(auto_amount),
-    "cu": "INR",
-    "tn": upi_note
+    "pa": SOCIETY_UPI_ID,       # Payee ID
+    "pn": SOCIETY_NAME_SHORT,   # Payee Name
+    "cu": "INR",                # Currency
+    "tn": upi_note              # Note (Invoice/Ref)
 }
 upi_query = urllib.parse.urlencode(upi_params)
 upi_url = f"upi://pay?{upi_query}"
 
-# Display Buttons
-b1, b2 = st.columns(2)
-# Using the same URL for both as intent links usually open the default app chooser
-b1.link_button("📲 Pay via UPI App (PhonePe/GPay)", upi_url, use_container_width=True)
+# Display Button
+st.link_button(
+    label="📲 Click to Open UPI App (Enter Amount Manually)", 
+    url=upi_url, 
+    use_container_width=True,
+    help="This will open PhonePe/GPay with the Society ID pre-filled."
+)
 
-# --- MANUAL PAY FALLBACK (FIX FOR 2000 LIMIT) ---
-# Note: Even with the fix, some banks still reject >2000 via intent. Keeping the warning is good practice.
-if auto_amount > 2000:
-    st.info(f"💡 **Paying over ₹2000?** If the button above fails, please copy the UPI ID below and pay manually in your app:")
-    st.code(SOCIETY_UPI_ID, language="text")
+# --- MANUAL FALLBACK ---
+st.caption("If the button doesn't work, copy the ID below:")
+st.code(SOCIETY_UPI_ID, language="text")
 
 # --- PROOF SUBMISSION FORM ---
 with st.form("verify_form", border=True):
@@ -219,9 +219,10 @@ with st.form("verify_form", border=True):
     
     f1, f2 = st.columns(2)
     with f1:
+        # We pre-fill this with the calculated amount, but user can change it
         amount_paid_user = st.number_input("Amount Paid (₹)", value=int(auto_amount), step=1)
     with f2:
-        txn_id = st.text_input("UTR / Transaction ID")
+        txn_id = st.text_input("UTR / Transaction ID (Required)")
         
     uploaded_file = st.file_uploader("Screenshot (Optional)", type=['jpg', 'png', 'jpeg'], label_visibility="collapsed")
     paid_confirm = st.checkbox(f"I transferred ₹{amount_paid_user}")
@@ -235,6 +236,8 @@ with st.form("verify_form", border=True):
             with st.spinner("Recording..."):
                 try:
                     target_months = get_target_months(period_type, selected_year, selected_qtr, selected_month)
+                    
+                    # Logic: If user paid less/more, split it evenly across selected months
                     if len(target_months) > 0: split_amount = amount_paid_user / len(target_months)
                     else: split_amount = amount_paid_user
 
@@ -253,7 +256,6 @@ with st.form("verify_form", border=True):
                         ]
                         rows_to_add.append(row)
                     
-                    # Batch append is slightly faster if sheet supports it, but loop is safer for format
                     for row in rows_to_add: 
                         sheet.append_row(row)
                         
@@ -269,10 +271,9 @@ with st.expander(f"📜 History: {plot_no}", expanded=True):
         data = sheet.get_all_records()
         if data:
             history_df = pd.DataFrame(data)
-            # Normalize columns
             history_df.columns = history_df.columns.str.strip()
             
-            # Ensure Plot No is string for comparison
+            # Robust column handling
             if 'Plot No' in history_df.columns:
                  history_df['Plot No'] = history_df['Plot No'].astype(str)
             elif 'Plot No.' in history_df.columns:
@@ -281,21 +282,19 @@ with st.expander(f"📜 History: {plot_no}", expanded=True):
             my_history = history_df[history_df['Plot No'] == str(plot_no)]
             
             if not my_history.empty:
-                # Rename for display
                 rename_map = {
                     "Date": "Date", "Period": "Period", "Amount": "Amt", 
                     "Transaction ID": "UTR", "Verified": "Status", 
                     "verified": "Status", "Payment verified": "Status",
                     "Payment Verified": "Status"
                 }
-                # Filter only columns that exist in the dataframe
+                # Only rename columns that actually exist
                 rename_map = {k: v for k, v in rename_map.items() if k in my_history.columns}
-                
                 my_history = my_history.rename(columns=rename_map)
                 
                 if "Status" not in my_history.columns: my_history["Status"] = "Pending"
                 
-                # Dynamic column selection to avoid errors if columns missing
+                # Show available columns only
                 cols_to_show = [c for c in ["Date", "Period", "Amt", "UTR", "Status"] if c in my_history.columns]
                 st.dataframe(my_history[cols_to_show], use_container_width=True, hide_index=True)
             else:
