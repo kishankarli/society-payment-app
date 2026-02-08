@@ -5,7 +5,6 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
 import re
-import urllib.parse
 
 # --- CONFIGURATION ---
 SOCIETY_UPI_ID = "8143373163@kotak811"
@@ -61,6 +60,14 @@ def local_css():
             -webkit-text-fill-color: var(--text-color) !important;
             opacity: 1 !important;
             font-weight: bold !important;
+        }
+        .upi-box {
+            background-color: #f0f2f6;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px dashed #FF4B4B;
+            text-align: center;
+            margin-bottom: 20px;
         }
         </style>
         """,
@@ -178,54 +185,32 @@ with st.container():
 
 # --- WARNING BANNER ---
 st.markdown("""
-    <div style='background-color: #ffebee; border-left: 4px solid #d32f2f; padding: 10px; border-radius: 4px; margin-bottom: 10px; font-size: 0.9rem;'>
-        <strong style='color: #b71c1c;'>⚠️ IMPORTANT:</strong> 
-        <span style='color: #c62828;'>Clicking the button below opens your UPI app. You must enter the amount manually.</span>
+    <div style='background-color: #ffebee; border-left: 4px solid #d32f2f; padding: 10px; border-radius: 4px; margin-bottom: 15px; font-size: 0.9rem;'>
+        <strong style='color: #b71c1c;'>⚠️ INSTRUCTIONS:</strong> 
+        <span style='color: #c62828;'>Copy the UPI ID below, pay via any app, and enter details below.</span>
     </div>
 """, unsafe_allow_html=True)
 
-# --- GENERATE PAYMENT LINKS (EDITABLE AMOUNT) ---
-if period_type == "Year": note_suffix = f"{selected_year}"
-elif period_type == "Quarter": note_suffix = f"{selected_qtr}_{selected_year}"
-else: note_suffix = f"{selected_month}_{selected_year}"
-
-upi_note = f"{plot_no}_{note_suffix}"
-
-# NOTE: We removed "am" (Amount) to allow user editing
-upi_params = {
-    "pa": SOCIETY_UPI_ID,       # Payee ID
-    "pn": SOCIETY_NAME_SHORT,   # Payee Name
-    "cu": "INR",                # Currency
-    "tn": upi_note              # Note (Invoice/Ref)
-}
-upi_query = urllib.parse.urlencode(upi_params)
-upi_url = f"upi://pay?{upi_query}"
-
-# Display Button
-st.link_button(
-    label="📲 Click to Open UPI App (Enter Amount Manually)", 
-    url=upi_url, 
-    use_container_width=True,
-    help="This will open PhonePe/GPay with the Society ID pre-filled."
-)
-
-# --- MANUAL FALLBACK ---
-st.caption("If the button doesn't work, copy the ID below:")
-st.code(SOCIETY_UPI_ID, language="text")
+# --- MANUAL PAYMENT DETAILS (UPI ID ONLY) ---
+st.markdown(f"""
+    <div class="upi-box">
+        <div style="font-size: 0.9rem; color: #555; margin-bottom: 5px;">Copy UPI ID to Pay</div>
+        <code style="font-size: 1.2rem; font-weight: bold; background: white; padding: 5px 10px; border-radius: 4px;">{SOCIETY_UPI_ID}</code>
+    </div>
+""", unsafe_allow_html=True)
 
 # --- PROOF SUBMISSION FORM ---
 with st.form("verify_form", border=True):
-    st.write("**Submit Payment Proof**")
+    st.write("**Step 2: Submit Payment Proof**")
     
     f1, f2 = st.columns(2)
     with f1:
-        # We pre-fill this with the calculated amount, but user can change it
         amount_paid_user = st.number_input("Amount Paid (₹)", value=int(auto_amount), step=1)
     with f2:
         txn_id = st.text_input("UTR / Transaction ID (Required)")
         
     uploaded_file = st.file_uploader("Screenshot (Optional)", type=['jpg', 'png', 'jpeg'], label_visibility="collapsed")
-    paid_confirm = st.checkbox(f"I transferred ₹{amount_paid_user}")
+    paid_confirm = st.checkbox(f"I transferred ₹{amount_paid_user} to the ID above")
     
     if st.form_submit_button("✅ Verify & Record Payment", use_container_width=True):
         if not paid_confirm:
@@ -237,7 +222,6 @@ with st.form("verify_form", border=True):
                 try:
                     target_months = get_target_months(period_type, selected_year, selected_qtr, selected_month)
                     
-                    # Logic: If user paid less/more, split it evenly across selected months
                     if len(target_months) > 0: split_amount = amount_paid_user / len(target_months)
                     else: split_amount = amount_paid_user
 
@@ -273,7 +257,6 @@ with st.expander(f"📜 History: {plot_no}", expanded=True):
             history_df = pd.DataFrame(data)
             history_df.columns = history_df.columns.str.strip()
             
-            # Robust column handling
             if 'Plot No' in history_df.columns:
                  history_df['Plot No'] = history_df['Plot No'].astype(str)
             elif 'Plot No.' in history_df.columns:
@@ -288,13 +271,11 @@ with st.expander(f"📜 History: {plot_no}", expanded=True):
                     "verified": "Status", "Payment verified": "Status",
                     "Payment Verified": "Status"
                 }
-                # Only rename columns that actually exist
                 rename_map = {k: v for k, v in rename_map.items() if k in my_history.columns}
                 my_history = my_history.rename(columns=rename_map)
                 
                 if "Status" not in my_history.columns: my_history["Status"] = "Pending"
                 
-                # Show available columns only
                 cols_to_show = [c for c in ["Date", "Period", "Amt", "UTR", "Status"] if c in my_history.columns]
                 st.dataframe(my_history[cols_to_show], use_container_width=True, hide_index=True)
             else:
