@@ -5,6 +5,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
 import re
+import urllib.parse  # Added for safe URL encoding
 
 # --- CONFIGURATION ---
 SOCIETY_UPI_ID = "8143373163@kotak811"
@@ -183,21 +184,33 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
-# --- GENERATE PAYMENT LINKS ---
+# --- GENERATE PAYMENT LINKS (FIXED FOR UPI APPS) ---
 if period_type == "Year": note_suffix = f"{selected_year}"
 elif period_type == "Quarter": note_suffix = f"{selected_qtr}_{selected_year}"
 else: note_suffix = f"{selected_month}_{selected_year}"
 
 upi_note = f"{plot_no}_{note_suffix}"
-upi_url = f"upi://pay?pa={SOCIETY_UPI_ID}&pn={SOCIETY_NAME_SHORT}&am={auto_amount}&tn={upi_note}"
 
+# Constructing Safe UPI URL
+upi_params = {
+    "pa": SOCIETY_UPI_ID,
+    "pn": SOCIETY_NAME_SHORT,
+    "am": str(auto_amount),
+    "cu": "INR",
+    "tn": upi_note
+}
+upi_query = urllib.parse.urlencode(upi_params)
+upi_url = f"upi://pay?{upi_query}"
+
+# Display Buttons
 b1, b2 = st.columns(2)
-b1.link_button("🔵 Pay via PhonePe", upi_url, use_container_width=True)
-b2.link_button("🟢 Pay via GPay", upi_url, use_container_width=True)
+# Using the same URL for both as intent links usually open the default app chooser
+b1.link_button("📲 Pay via UPI App (PhonePe/GPay)", upi_url, use_container_width=True)
 
 # --- MANUAL PAY FALLBACK (FIX FOR 2000 LIMIT) ---
+# Note: Even with the fix, some banks still reject >2000 via intent. Keeping the warning is good practice.
 if auto_amount > 2000:
-    st.info(f"💡 **Paying over ₹2000?** Link buttons may fail due to UPI limits. Please copy ID below and pay manually:")
+    st.info(f"💡 **Paying over ₹2000?** If the button above fails, please copy the UPI ID below and pay manually in your app:")
     st.code(SOCIETY_UPI_ID, language="text")
 
 # --- PROOF SUBMISSION FORM ---
@@ -240,7 +253,10 @@ with st.form("verify_form", border=True):
                         ]
                         rows_to_add.append(row)
                     
-                    for row in rows_to_add: sheet.append_row(row)
+                    # Batch append is slightly faster if sheet supports it, but loop is safer for format
+                    for row in rows_to_add: 
+                        sheet.append_row(row)
+                        
                     st.success("Saved! Your payment is recorded.")
                     st.rerun()
                 except Exception as e:
@@ -253,22 +269,38 @@ with st.expander(f"📜 History: {plot_no}", expanded=True):
         data = sheet.get_all_records()
         if data:
             history_df = pd.DataFrame(data)
+            # Normalize columns
             history_df.columns = history_df.columns.str.strip()
-            history_df['Plot No'] = history_df['Plot No'].astype(str)
+            
+            # Ensure Plot No is string for comparison
+            if 'Plot No' in history_df.columns:
+                 history_df['Plot No'] = history_df['Plot No'].astype(str)
+            elif 'Plot No.' in history_df.columns:
+                 history_df['Plot No'] = history_df['Plot No.'].astype(str)
+            
             my_history = history_df[history_df['Plot No'] == str(plot_no)]
             
             if not my_history.empty:
-                my_history = my_history.rename(columns={
+                # Rename for display
+                rename_map = {
                     "Date": "Date", "Period": "Period", "Amount": "Amt", 
                     "Transaction ID": "UTR", "Verified": "Status", 
                     "verified": "Status", "Payment verified": "Status",
                     "Payment Verified": "Status"
-                })
+                }
+                # Filter only columns that exist in the dataframe
+                rename_map = {k: v for k, v in rename_map.items() if k in my_history.columns}
+                
+                my_history = my_history.rename(columns=rename_map)
+                
                 if "Status" not in my_history.columns: my_history["Status"] = "Pending"
-                st.dataframe(my_history[["Date", "Period", "Amt", "UTR", "Status"]], use_container_width=True, hide_index=True)
+                
+                # Dynamic column selection to avoid errors if columns missing
+                cols_to_show = [c for c in ["Date", "Period", "Amt", "UTR", "Status"] if c in my_history.columns]
+                st.dataframe(my_history[cols_to_show], use_container_width=True, hide_index=True)
             else:
                 st.info("No records found.")
         else:
             st.info("Ledger is empty.")
-    except:
-        st.warning("Loading history...")
+    except Exception as e:
+        st.warning(f"Loading history... {e}")
